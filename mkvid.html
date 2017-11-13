@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html>
+	<head>
+		<meta charset="UTF-8">
+		<title>Make videos from ipfs file lists</title>
+		<script src="jquery.min.js"></script>
+		<script src="whammy.js"></script>
+		<script type="text/javascript">
+			// Note that this entire idea violates "Bring your application to your data, not the other way around". ¯\_(ツ)_/¯
+
+			// https://stackoverflow.com/questions/979975/how-to-get-the-value-from-the-get-parameters/1099670#1099670
+			function getQueryParams(qs) {
+				qs = qs.split('+').join(' ');
+
+				var params = {},
+					tokens,
+					re = /[?&]?([^=]+)=([^&]*)/g;
+
+				while (tokens = re.exec(qs)) {
+					params[decodeURIComponent(tokens[1])] = decodeURIComponent(tokens[2]);
+				}
+
+				return params;
+			}
+
+			// https://stackoverflow.com/questions/15900485/correct-way-to-convert-size-in-bytes-to-kb-mb-gb-in-javascript
+			function formatSizeUnits(bytes){
+				if      (bytes>=1073741824) {bytes=(bytes/1073741824).toFixed(2)+' GB';}
+				else if (bytes>=1048576)    {bytes=(bytes/1048576).toFixed(2)+' MB';}
+				else if (bytes>=1024)       {bytes=(bytes/1024).toFixed(2)+' KB';}
+				else                        {bytes=bytes+' B';}
+				return bytes;
+			}
+
+			// https://ipfs.io/api/v0/ls/QmRqjxJj1AP2WTNJfKoWuJKKYCDNdYDWjzSGuTRW4XAadi
+			// https://ipfs.io/ipfs/zb2rhfy2zoyrbXFhAPe7WdxuWGiDUTk8ejpVDqs5q6aHnnjjX
+			
+			function log(str) {
+				var t = document.createTextNode(str);
+				append_log(t);
+				return t;
+			}
+
+			function append_log(obj) {
+				document.body.appendChild(obj);
+				document.body.appendChild(document.createElement('br'));
+			}
+
+			var gw = document.location.origin;
+			var scale = 1000;
+
+			function usage() {
+				var showgw = gw;
+				if(!RegExp("^/ipfs/").test(document.location.pathname))
+					showgw = "https://ipfs.io";
+				log("Script for converting a series of images in an IPFS directory to a WebM directly in browser.")
+				log("");
+				log("Script requires arguments in the search string (i.e. mkvid.html?arg=value&…):");
+				log("    Required: h - ipfs-hash resolving to folder of images.");
+				log("    Required: f - RegExp to filter files in folder and extract a numbering for the images.");
+				log("    Optional: s - Scale factor for time codes extracted from image numbering. Default: " + scale + " ms");
+				log("    Optional: gw - IPFS gateway. Default: current gateway (i.e. " + gw + ". E.g. https://ipfs.io).");
+				log("");
+				var m = new URL(document.location);
+				m.search = "h=QmRqjxJj1AP2WTNJfKoWuJKKYCDNdYDWjzSGuTRW4XAadi&f=c-([0-9]*).jpeg&s=0.2&gw=" + showgw;
+				var e = document.createElement('span');
+				e.appendChild(document.createTextNode("Example: "));
+				var a = document.createElement('a');
+				a.href = m.href;
+				a.appendChild(document.createTextNode(m.href));
+				e.appendChild(a);
+				append_log(e);
+			}
+			
+			function main() {
+				var query = getQueryParams(document.location.search);
+				if (query.gw)
+					gw = query.gw;
+				var re;
+				try {
+					re = new RegExp(query.f);
+					scale = parseFloat(query.s);
+				} catch(e) {}
+				if (!re || !query.h)
+					return usage();
+				if(!(/^data:image\/webp;base64,/ig).test(document.createElement('canvas').toDataURL('image/webp')))
+					log("WARNING: Your browser lacks native WebP support. At the time of this writing, Chrome and Safari were tested and worked. This is likely going to be slow and produce garbage output.");
+				log("Searching (Gateway: " + gw + ")…");
+				$.getJSON(gw + "/api/v0/ls/" + query.h, function(fd) {
+					var links = fd.Objects[0].Links;
+					var objs = [];
+					var size = 0;
+					for(var i = 0; i < links.length; i++) {
+						var l = links[i];
+						var m = re.exec(l.Name);
+						if(m) {
+							objs.push(l);
+							size += l.Size;
+							l.Match = m;
+							l.T = parseFloat(m[1]);
+						}
+					}
+					log("Found " + objs.length + " images (" + formatSizeUnits(size) + ")");
+					if (!(objs.length >= 1)) {
+						log("Exiting.");
+						return;
+					}
+					objs.sort(function(a,b) { return b.T - a.T; });
+					getVid(objs);
+				})
+				.fail(function(jqxhr, textStatus, error) {
+					var err = textStatus + ", " + error;
+					log("Failed to get file list: " + err);
+				});
+			}
+
+			var x = [];
+
+			function getVid(objs) {
+				var Tmin = objs[objs.length - 1].T;
+				var sline = log();
+				var total = objs.length;
+				var stus = function() { sline.textContent = "Download: " + (total - objs.length) + "/" + total; };
+				stus(0);
+				var vid = new Whammy.Video();
+				var nextImg = function() {
+					stus();
+					var obj = objs.pop();
+					if (!obj) {
+						stus();
+						makeVid(vid);
+						return;
+					}
+					var img = new Image();
+					img.crossOrigin = "Anonymous";
+					img.onload = function() {
+						var cvs = document.createElement("canvas");
+						cvs.height = img.height;
+						cvs.width = img.width;
+						var ctx = cvs.getContext("2d");
+						ctx.drawImage(img, 0, 0);
+						var dur = 1000;
+						if (objs.length > 0) {
+							dur = (objs[objs.length - 1].T - obj.T) * scale;
+							objs[objs.length - 1].Dlast = dur;
+						} else if(obj.Dlast) {
+							dur = obj.Dlast;
+						}
+						//log("T: " + obj.T + " Tmin: " + Tmin + " s: " + scale + " dur: " + dur);
+						vid.add(cvs, dur);
+						nextImg();
+					};
+					img.src = gw + "/ipfs/" + obj.Hash;
+				};
+				nextImg();
+			}
+
+			function makeVid(vid) {
+				var sline = log();
+				var stus = function(i, total) { sline.textContent = "Encoding: " + (i + 1) + "/" + total; };
+				stus(-1, "?");
+				vid.compile(x, useVid, stus);
+			}
+
+			function useVid(vid_data) {
+				log("Done.");
+				var vid_url = (window.URL || window.webkitURL).createObjectURL(new Blob([vid_data]));
+				var dl = document.createElement('a');
+				dl.download = 'lapse.webm';
+				dl.href = vid_url;
+				dl.appendChild(document.createTextNode("Download"));
+				append_log(dl);
+				var vid_e = document.createElement('video');
+				vid_e.url = vid_url;
+				vid_e.width = 640;
+				vid_e.height = 480;
+				append_log(vid_e);
+			}
+
+			$(document).ready(main);
+		</script>
+	</head>
+	<body>
+	</body>
+</html>
