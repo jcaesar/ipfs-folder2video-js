@@ -5,35 +5,11 @@
 		<title>Make videos from ipfs file lists</title>
 		<script src="jquery.min.js"></script>
 		<script src="whammy.js"></script>
+		<script src="natsort.min.js"></script> <!-- natsort 1.6 -->
+		<script src="somefuncs.js"></script>
 		<script type="text/javascript">
 			// Note that this entire idea violates "Bring your application to your data, not the other way around". ¯\_(ツ)_/¯
 
-			// https://stackoverflow.com/questions/979975/how-to-get-the-value-from-the-get-parameters/1099670#1099670
-			function getQueryParams(qs) {
-				qs = qs.split('+').join(' ');
-
-				var params = {},
-					tokens,
-					re = /[?&]?([^=]+)=([^&]*)/g;
-
-				while (tokens = re.exec(qs)) {
-					params[decodeURIComponent(tokens[1])] = decodeURIComponent(tokens[2]);
-				}
-
-				return params;
-			}
-
-			// https://stackoverflow.com/questions/15900485/correct-way-to-convert-size-in-bytes-to-kb-mb-gb-in-javascript
-			function formatSizeUnits(bytes){
-				if      (bytes>=1073741824) {bytes=(bytes/1073741824).toFixed(2)+' GB';}
-				else if (bytes>=1048576)    {bytes=(bytes/1048576).toFixed(2)+' MB';}
-				else if (bytes>=1024)       {bytes=(bytes/1024).toFixed(2)+' KB';}
-				else                        {bytes=bytes+' B';}
-				return bytes;
-			}
-
-			// https://ipfs.io/api/v0/ls/QmRqjxJj1AP2WTNJfKoWuJKKYCDNdYDWjzSGuTRW4XAadi
-			// https://ipfs.io/ipfs/zb2rhfy2zoyrbXFhAPe7WdxuWGiDUTk8ejpVDqs5q6aHnnjjX
 			
 			function log(str) {
 				var t = document.createTextNode(str);
@@ -45,21 +21,19 @@
 				document.body.appendChild(obj);
 				document.body.appendChild(document.createElement('br'));
 			}
-
-			var gw = document.location.origin;
+			
+			var gw = autogw();
 			var scale = 1000;
 
 			function usage() {
-				var showgw = gw;
-				if(!RegExp("^/ipfs/").test(document.location.pathname))
-					showgw = "https://ipfs.io";
+				var showgw = autogw();
 				log("Script for converting a series of images in an IPFS directory to a WebM directly in browser.")
 				log("");
 				log("Script requires arguments in the search string (i.e. mkvid.html?arg=value&…):");
 				log("    Required: h - ipfs-hash resolving to folder of images.");
 				log("    Required: f - RegExp to filter files in folder and extract a numbering for the images.");
 				log("    Optional: s - Scale factor for time codes extracted from image numbering. Default: " + scale + " ms");
-				log("    Optional: gw - IPFS gateway. Default: current gateway (i.e. " + gw + ". E.g. https://ipfs.io).");
+				log("    Optional: gw - IPFS gateway. Default: current gateway, if available (e.g.: " + uniq([gw, showgw, "https://ipfs.io"]).join(", ") + ")");
 				log("");
 				var m = new URL(document.location);
 				m.search = "h=QmRqjxJj1AP2WTNJfKoWuJKKYCDNdYDWjzSGuTRW4XAadi&f=c-([0-9]*).jpeg&s=0.2&gw=" + showgw;
@@ -79,9 +53,9 @@
 				var re;
 				try {
 					re = new RegExp(query.f);
-					scale = parseFloat(query.s);
+					scale = parseFloat(query.s) || scale;
 				} catch(e) {}
-				if (!re || !query.h)
+				if (!re || !query.f || !query.h)
 					return usage();
 				if(!(/^data:image\/webp;base64,/ig).test(document.createElement('canvas').toDataURL('image/webp')))
 					log("WARNING: Your browser lacks native WebP support. At the time of this writing, Chrome and Safari were tested and worked. This is likely going to be slow and produce garbage output.");
@@ -97,7 +71,7 @@
 							objs.push(l);
 							size += l.Size;
 							l.Match = m;
-							l.T = parseFloat(m[1]);
+							l.T = parseFloat(m[m]);
 						}
 					}
 					log("Found " + objs.length + " images (" + formatSizeUnits(size) + ")");
@@ -105,7 +79,8 @@
 						log("Exiting.");
 						return;
 					}
-					objs.sort(function(a,b) { return b.T - a.T; });
+					ns = natsort({ insensitive: true, desc: true })
+					objs.sort(function(a,b) { return ns(a.Name, b.Name); });
 					getVid(objs);
 				})
 				.fail(function(jqxhr, textStatus, error) {
@@ -113,8 +88,6 @@
 					log("Failed to get file list: " + err);
 				});
 			}
-
-			var x = [];
 
 			function getVid(objs) {
 				var Tmin = objs[objs.length - 1].T;
@@ -146,8 +119,8 @@
 						} else if(obj.Dlast) {
 							dur = obj.Dlast;
 						}
-						//log("T: " + obj.T + " Tmin: " + Tmin + " s: " + scale + " dur: " + dur);
-						vid.add(cvs, dur);
+						//log("N: " + obj.Name + " T: " + obj.T + " Tmin: " + Tmin + " s: " + scale + " dur: " + dur);
+						vid.add(cvs, Math.max(Math.min(dur, 32766), 1));
 						nextImg();
 					};
 					img.src = gw + "/ipfs/" + obj.Hash;
@@ -159,22 +132,34 @@
 				var sline = log();
 				var stus = function(i, total) { sline.textContent = "Encoding: " + (i + 1) + "/" + total; };
 				stus(-1, "?");
-				vid.compile(x, useVid, stus);
+				vid.compile(false, useVid, stus);
 			}
 
-			function useVid(vid_data) {
-				log("Done.");
-				var vid_url = (window.URL || window.webkitURL).createObjectURL(new Blob([vid_data]));
+			function useVid(vid_blob) {
+				var donel = log("Done. Size: " + formatSizeUnits(vid_blob.size));
+				var vid_url = (window.URL || window.webkitURL).createObjectURL(vid_blob);
+				var vid_e = document.createElement('video');
+				if (vid_e.canPlayType(vid_blob.type).length > 0) {
+					vid_e.url = vid_url;
+					vid_e.setAttribute('autoplay', '');
+					vid_e.setAttribute('controls', '');
+					append_log(vid_e);
+					vid_e.addEventListener('loadedmetadata', function() {
+						var w = 640, h = 480;
+						if(vid_e.videoWidth > 0 && vid_e.videoHeight > 0) {
+							w = vid_e.videoWidth; h = vid_e.videoHeight;
+							donel.textContent += " Dimensions: " + w + "×" + h;
+						}
+						if (vid_e.duration)
+							donel.textContent += " Duration: " + vid_e.duration + " s";
+						vid_e.width = w; vid_e.height = h;
+					});
+				}
 				var dl = document.createElement('a');
 				dl.download = 'lapse.webm';
 				dl.href = vid_url;
-				dl.appendChild(document.createTextNode("Download"));
+				dl.appendChild(document.createTextNode("Save"));
 				append_log(dl);
-				var vid_e = document.createElement('video');
-				vid_e.url = vid_url;
-				vid_e.width = 640;
-				vid_e.height = 480;
-				append_log(vid_e);
 			}
 
 			$(document).ready(main);

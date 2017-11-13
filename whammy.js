@@ -576,7 +576,6 @@ window.Whammy = (function(){
 
 					//output (array of bytes)
 					var output = out.output;
-					console.log(output);
 					return output;
 				};
 				callback(encoder);

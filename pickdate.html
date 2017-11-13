@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html>
+	<head>
+		<meta charset="UTF-8">
+		<title>Make videos from ipfs file lists</title>
+		<link rel="stylesheet" href="bootstrap-year-calendar.min.css">
+		<script src="jquery.min.js"></script>
+		<script src="bootstrap-year-calendar.min.js"></script>
+		<script src="moment.js"></script>
+		<script src="somefuncs.js"></script>
+		<script type="text/javascript">
+			var query = getQueryParams(document.location.search);
+			var gw = query.gw || autogw();
+			var folderdatefmt = query.f || "YY-MM-DD";
+			var imagefmt = query.i || "[cz]-([0-9]*).jpeg";
+			var hash = query.h || "QmTODO";
+			$(function() {
+				$.getJSON("ex1.json"/*gw + "/api/v0/ls/" + query.h*/, function (fd) {
+					var links = fd.Objects[0].Links;
+					var dir = {};
+					var maxsize = 0;
+					for(var i = 0; i < links.length; i++) {
+						dir[links[i].Name] = links[i];
+						maxsize = Math.max(maxsize, links[i].Size);
+					}
+					$('#calendar').calendar({
+						customDayRenderer: function(element, date) {
+							var folder = dir[moment(date).format(folderdatefmt)];
+							if(folder) {
+								$(element).css('background-color', 
+									lerpColor('#ff0000', '#00aa00', folder.Size / maxsize));
+								$(element).css('color', 'white');
+								$(element).css('border-radius', '12px');
+								$(element).click(function() {
+									window.location.href = "./mkvid.html" +
+										"?h=" + folder.Hash +
+										"&f=" + imagefmt + 
+										"&s=0.2" +
+										(query.gw? "&gw=" + gw:"");
+								});
+							} else {
+								$(element).parent().addClass('disabled'); // API misuse?
+							}
+						},
+					});
+				});
+			});
+		</script>
+	</head>
+	<body>
+		<div style: "padding-left: 20px;width: 100%;">
+			<div id=calendar style="box-sizing: border-box;">
+			</div>
+		</div>
+	</body>
+</html>
