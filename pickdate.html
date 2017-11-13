@@ -3,8 +3,13 @@
 	<head>
 		<meta charset="UTF-8">
 		<title>Make videos from ipfs file lists</title>
+		<link rel="stylesheet" href="bootstrap.min.css">
 		<link rel="stylesheet" href="bootstrap-year-calendar.min.css">
+		<style type="text/css">
+			/* { border: 1px dotted red; margin: 0px; } */
+		</style>
 		<script src="jquery.min.js"></script>
+		<script src="bootstrap.min.js"></script>
 		<script src="bootstrap-year-calendar.min.js"></script>
 		<script src="moment.js"></script>
 		<script src="somefuncs.js"></script>
@@ -15,13 +20,19 @@
 			var imagefmt = query.i || "[cz]-([0-9]*).jpeg";
 			var hash = query.h || "QmTODO";
 			$(function() {
-				$.getJSON("ex1.json"/*gw + "/api/v0/ls/" + query.h*/, function (fd) {
+				$.getJSON(gw + "/api/v0/ls/" + query.h, function (fd) {
 					var links = fd.Objects[0].Links;
 					var dir = {};
 					var maxsize = 0;
+					var minDate = new Date(), maxDate;
 					for(var i = 0; i < links.length; i++) {
 						dir[links[i].Name] = links[i];
 						maxsize = Math.max(maxsize, links[i].Size);
+						try {
+							var T = new Date(moment(links[i].Name, folderdatefmt));
+							minDate = Math.min(minDate, T);
+							maxDate = maxDate? Math.max(maxDate, T) : T;
+						} catch(e) {}
 					}
 					$('#calendar').calendar({
 						customDayRenderer: function(element, date) {
@@ -42,6 +53,8 @@
 								$(element).parent().addClass('disabled'); // API misuse?
 							}
 						},
+						minDate: minDate, maxDate: maxDate,
+						startYear: moment(maxDate).year()
 					});
 				});
 			});

@@ -71,7 +71,7 @@
 							objs.push(l);
 							size += l.Size;
 							l.Match = m;
-							l.T = parseFloat(m[m]);
+							l.T = parseFloat(m[m.length - 1]);
 						}
 					}
 					log("Found " + objs.length + " images (" + formatSizeUnits(size) + ")");
@@ -90,7 +90,6 @@
 			}
 
 			function getVid(objs) {
-				var Tmin = objs[objs.length - 1].T;
 				var sline = log();
 				var total = objs.length;
 				var stus = function() { sline.textContent = "Download: " + (total - objs.length) + "/" + total; };
@@ -119,7 +118,6 @@
 						} else if(obj.Dlast) {
 							dur = obj.Dlast;
 						}
-						//log("N: " + obj.Name + " T: " + obj.T + " Tmin: " + Tmin + " s: " + scale + " dur: " + dur);
 						vid.add(cvs, Math.max(Math.min(dur, 32766), 1));
 						nextImg();
 					};
