@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html>
+	<head>
+		<meta charset="UTF-8">
+		<title>Archiv der Webcam Altstadtbrücke Görlitz</title>
+		<style type="text/css">
+			* { margin: 0px; padding: 0px; }
+			iframe { border: 0px; width: 100vw; height: 100vh; display: block; }
+			body { height: 100%; overflow: hidden; }	
+			.spin { background:url(./spinner.gif) center center no-repeat; }
+		</style>
+		<script type="text/javascript">
+			// https://davidwalsh.name/window-iframe
+
+			// Create IE + others compatible event handler
+			var eventMethod = window.addEventListener ? "addEventListener" : "attachEvent";
+			var eventer = window[eventMethod];
+			var messageEvent = eventMethod == "attachEvent" ? "onmessage" : "message";
+
+			// Listen to message from child window
+			eventer(messageEvent, function(e) {
+				if (!e.data)
+					return;
+				if (e.data.window_location_href && typeof e.data.window_location_href == "string") {
+					blockpop = true;
+					window.location.assign('#' + e.data.window_location_href.replace(/^#/, ''));
+					blockpop = false;
+				} if (e.data.folder_hint_request)
+					e.source.postMessage({folder_hint: window.location.hash.replace(/^#/, '')}, "*");
+
+			}, false);
+
+			function ifrl(ifr) {
+				ifr.src = "https://gateway.ipfs.io/ipns/goecam.liftm.de/start.html";
+			}
+			var blockpop = false;
+			window.onload = function() {
+				var ifr = document.querySelector('iframe');
+				ifrl(ifr);
+				ifr.onload = function() {
+					document.body.classList.remove('spin');
+				}
+				window.onpopstate = function (a,b,c) {
+					if (!blockpop) {
+						window.location.replace('#');
+						ifrl(ifr);
+					}
+				};
+			};	
+		</script>
+	</head>
+	<body class='spin'>
+		 <iframe></iframe> 
+	</body>
+</html>
