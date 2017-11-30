@@ -538,7 +538,7 @@ window.Whammy = (function(){
 			encoder = function(img, quality) { return atob(img.toDataURL('image/webp', quality).slice(23)); };
 			callback(encoder);
 		}else{
-			loadScript('libwebp-0.1.3.min.js', function(){
+			loadScript('js/libwebp-0.1.3.min.js', function(){
 				encoder = function(cvs, quali) {
 					var out={output:''}; //rgba data
 					var encoder = new WebPEncoder();

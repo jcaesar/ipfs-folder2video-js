@@ -2,68 +2,118 @@
 <html>
 	<head>
 		<meta charset="UTF-8">
-		<title>Make videos from ipfs file lists</title>
-		<link rel="stylesheet" href="bootstrap.min.css">
-		<link rel="stylesheet" href="bootstrap-year-calendar.min.css">
+		<title>Select a folder for making a Video</title>
 		<style type="text/css">
-			/* { border: 1px dotted red; margin: 0px; } */
+			* { /* border: 1px dotted red; */ margin: 0px; }
+			body { padding: 2ex; }
 		</style>
-		<script src="jquery.min.js"></script>
-		<script src="bootstrap.min.js"></script>
-		<script src="bootstrap-year-calendar.min.js"></script>
-		<script src="moment.js"></script>
-		<script src="somefuncs.js"></script>
+		<link rel="stylesheet" href="css/bootstrap.min.css">
+		<link rel="stylesheet" href="css/bootstrap-year-calendar.min.css">
+		<script src="js/jquery.min.js"></script>
+		<script src="js/bootstrap.min.js"></script>
+		<script src="js/bootstrap-year-calendar.min.js"></script>
+		<script src="js/moment.js"></script>
+		<script src="js/somefuncs.js"></script>
 		<script type="text/javascript">
 			var query = getQueryParams(document.location.search);
 			var gw = query.gw || autogw();
 			var folderdatefmt = query.f || "YY-MM-DD";
 			var imagefmt = query.i || "[cz]-([0-9]*).jpeg";
-			var hash = query.h || "QmTODO";
-			$(function() {
-				$.getJSON(gw + "/api/v0/ls/" + query.h, function (fd) {
-					var links = fd.Objects[0].Links;
-					var dir = {};
-					var maxsize = 0;
-					var minDate = new Date(), maxDate;
-					for(var i = 0; i < links.length; i++) {
-						dir[links[i].Name] = links[i];
-						maxsize = Math.max(maxsize, links[i].Size);
-						try {
-							var T = new Date(moment(links[i].Name, folderdatefmt));
-							minDate = Math.min(minDate, T);
-							maxDate = maxDate? Math.max(maxDate, T) : T;
-						} catch(e) {}
-					}
-					$('#calendar').calendar({
-						customDayRenderer: function(element, date) {
-							var folder = dir[moment(date).format(folderdatefmt)];
-							if(folder) {
-								$(element).css('background-color', 
-									lerpColor('#ff0000', '#00aa00', folder.Size / maxsize));
-								$(element).css('color', 'white');
-								$(element).css('border-radius', '12px');
-								$(element).click(function() {
-									window.location.href = "./mkvid.html" +
-										"?h=" + folder.Hash +
-										"&f=" + imagefmt + 
-										"&s=0.2" +
-										(query.gw? "&gw=" + gw:"");
-								});
-							} else {
-								$(element).parent().addClass('disabled'); // API misuse?
-							}
-						},
-						minDate: minDate, maxDate: maxDate,
-						startYear: moment(maxDate).year()
-					});
+			var hash = query.h || "QmbJTUZuPfAN4GUxHHm8PSGbSL78MomXCxWQUsPNLGeSYf";
+			function folder2vid(folder) {
+				while(document.body.firstChild)
+					document.body.removeChild(document.body.firstChild);
+				var spin = new Image();
+				spin.src = 'gfx/spinner.gif';
+				document.body.appendChild(spin);
+				//window.location.hash = folder.Name;
+				parent.postMessage({window_location_href: folder.Name}, "*");
+				document.location.replace("./mkvid.html" +
+					"?h=" + folder.Hash +
+					"&f=" + imagefmt + 
+					"&s=0.2" +
+					(query.gw? "&gw=" + gw:"")
+				);
+			}
+			var dir = {};
+			function parse2cal(fd) {
+				var links = fd.Objects[0].Links;
+				var maxsize = 0;
+				var minDate = new Date(), maxDate;
+				var target = window.location.hash.replace(/^#/, '');
+				imagefmt = fd.naming;
+				for(var i = 0; i < links.length; i++) {
+					if (links[i].Name == target)
+						return folder2vid(links[i]);
+					dir[links[i].Name] = links[i];
+					maxsize = Math.max(maxsize, links[i].Size);
+					try {
+						var T = new Date(moment(links[i].Name, folderdatefmt));
+						minDate = Math.min(minDate, T);
+						maxDate = maxDate? Math.max(maxDate, T) : T;
+					} catch(e) {}
+				}
+				parent.postMessage({folder_hint_request: "prettyplease"}, "*");
+				$('#calendar').calendar({
+					customDayRenderer: function(element, date) {
+						var folder = dir[moment(date).format(folderdatefmt)];
+						if(folder) {
+							$(element).css('background-color', 
+								lerpColor('#222222', '#00aa00', folder.Size / maxsize));
+							$(element).css('color', 'white');
+							$(element).css('border-radius', '8px');
+							$(element).click(function() { folder2vid(folder); });
+						} else {
+							$(element).parent().addClass('disabled'); // API misuse?
+						}
+					},
+					minDate: minDate, maxDate: maxDate,
+					startYear: moment(maxDate).year()
 				});
+			}
+			function parsedesc(desc) {
+				wipe(document.getElementById('desc'));
+				if (desc.title) {
+					var tit = document.createElement('h1');
+					tit.appendChild(document.createTextNode(desc.title));
+					document.getElementById('head').appendChild(tit);
+				}
+				if (desc.desc && typeof desc.desc == "object")
+					for (var i = 0; i < desc.desc.length; i++) {
+						var p = document.createElement('p');
+						p.innerHTML = desc.desc[i];
+						document.getElementById('desc').appendChild(p);
+					}
+			}
+			$(function() {
+				$.getJSON(gw + "/ipfs/" + hash + "/desc.json", parsedesc).fail(function(jqxhr, textStatus, error) {
+					settext('desc', "Failed to get description: " + textStatus + ", " + error);
+				});
+				$.getJSON(gw + "/api/v0/ls/" + hash, parse2cal).fail(function(jqxhr, textStatus, error) {
+					settext('calendar', "Failed to get folder list: " + textStatus + ", " + error);
+				});
+			});
+			on_frame_event(function(e) {
+				if (!e.data) return;
+				var fh = e.data.folder_hint;
+				if (typeof fh != "string") return;
+				var f = dir[fh];
+				if (!f) return;
+				folder2vid(f);	
 			});
 		</script>
 	</head>
 	<body>
+		<div id=head></div>
 		<div style: "padding-left: 20px;width: 100%;">
 			<div id=calendar style="box-sizing: border-box;">
+				<img src="gfx/spinner.gif">
+				<br>
+				Give it time.
 			</div>
+		</div>
+		<div id=desc>
+			<img src="gfx/spinner.gif">
 		</div>
 	</body>
 </html>

@@ -3,27 +3,73 @@
 	<head>
 		<meta charset="UTF-8">
 		<title>Make videos from ipfs file lists</title>
-		<script src="jquery.min.js"></script>
-		<script src="whammy.js"></script>
-		<script src="natsort.min.js"></script> <!-- natsort 1.6 -->
-		<script src="somefuncs.js"></script>
+		<style type="text/css">
+			* { /* border: 1px dotted red; */ margin: 0px; }
+			body { padding: 2ex; }
+		</style>
+		<script src="js/jquery.min.js"></script>
+		<script src="js/whammy.js"></script>
+		<script src="js/natsort.min.js"></script> <!-- natsort 1.6 -->
+		<script src="js/somefuncs.js"></script>
 		<script type="text/javascript">
 			// Note that this entire idea violates "Bring your application to your data, not the other way around". ¯\_(ツ)_/¯
 
-			
-			function log(str) {
-				var t = document.createTextNode(str);
-				append_log(t);
-				return t;
-			}
-
-			function append_log(obj) {
-				document.body.appendChild(obj);
-				document.body.appendChild(document.createElement('br'));
-			}
-			
 			var gw = autogw();
 			var scale = 1000;
+			var parallelload = 6;
+			
+			var strings = {
+				WebPWarning: { 
+					en: "WARNING: Your browser lacks native WebP support. At the time of this writing, Chrome was tested and worked. This is likely going to be slow.",
+					de: "WARNING: Ihr browser unterstützt das WebP-Format nicht vollständig. Die Erstellung des Videos könnte beträchtliche Zeit in anspruch nehmen."
+				},
+				Search: {
+					en: "Searching for files (IPFS-Gateway: ",
+					de: "Suche nach Dateien (IPFS-Zugang: "
+				},
+				Found: {
+					en: ["Found ", " images (", ")."],
+					de: ["", " Bilder (", ") gefunden."]
+				},
+				Exit: {
+					en: "Exiting Programme.",
+					de: "Programm Beendet."
+				},
+				DownloadFail: {
+					en: "Failed to get file list: ",
+					de: "Fehler beim Auflisten der Dateien: "
+				},
+				Downloading: {
+					en: "Downloading",
+					de: "Herunterladen"
+				},
+				Enqueuing: {
+					// Well, not actually necessarily done in this step. But oh well…
+					en: "Image Encoding",
+					de: "Bildcodierung"
+				},
+				Encoding: {
+					en: "Video Encoding",
+					de: "Videocodierung"
+				},
+				DoneS: {
+					en: "Done. Size: ",
+					de: "Fertig. Größe: "
+				},
+				Dur: {
+					en: " Duration: ",
+					de: " Länge: "
+				},
+				Dim: {
+					en: " Dimensions: ",
+					de: " Auflösung: "
+				},
+				Save: {
+					en: "Save",
+					de: "Speichern"
+				}
+			}
+			var lst = localize(strings);
 
 			function usage() {
 				var showgw = autogw();
@@ -34,9 +80,10 @@
 				log("    Required: f - RegExp to filter files in folder and extract a numbering for the images.");
 				log("    Optional: s - Scale factor for time codes extracted from image numbering. Default: " + scale + " ms");
 				log("    Optional: gw - IPFS gateway. Default: current gateway, if available (e.g.: " + uniq([gw, showgw, "https://ipfs.io"]).join(", ") + ")");
+				log("    Optional: j - Maximum number of images requested in parallel. Default: " + parallelload + " ms");
 				log("");
 				var m = new URL(document.location);
-				m.search = "h=QmRqjxJj1AP2WTNJfKoWuJKKYCDNdYDWjzSGuTRW4XAadi&f=c-([0-9]*).jpeg&s=0.2&gw=" + showgw;
+				m.search = "h=QmRqjxJj1AP2WTNJfKoWuJKKYCDNdYDWjzSGuTRW4XAadi&f=c-([0-9]*).jpeg&s=0.2&gw=" + showgw + "&j=12";
 				var e = document.createElement('span');
 				e.appendChild(document.createTextNode("Example: "));
 				var a = document.createElement('a');
@@ -54,12 +101,13 @@
 				try {
 					re = new RegExp(query.f);
 					scale = parseFloat(query.s) || scale;
+					parallelload = Math.max(1, parseInt(query.j) || parallelload);
 				} catch(e) {}
 				if (!re || !query.f || !query.h)
 					return usage();
 				if(!(/^data:image\/webp;base64,/ig).test(document.createElement('canvas').toDataURL('image/webp')))
-					log("WARNING: Your browser lacks native WebP support. At the time of this writing, Chrome and Safari were tested and worked. This is likely going to be slow and produce garbage output.");
-				log("Searching (Gateway: " + gw + ")…");
+					log(lst.WebPWarning);
+				log(lst.Search + gw + ")…");
 				$.getJSON(gw + "/api/v0/ls/" + query.h, function(fd) {
 					var links = fd.Objects[0].Links;
 					var objs = [];
@@ -74,67 +122,99 @@
 							l.T = parseFloat(m[m.length - 1]);
 						}
 					}
-					log("Found " + objs.length + " images (" + formatSizeUnits(size) + ")");
+					log(lst.Found[0] + objs.length + lst.Found[1] + formatSizeUnits(size) + lst.Found[2]);
 					if (!(objs.length >= 1)) {
-						log("Exiting.");
+						log(lst.Exit);
 						return;
 					}
-					ns = natsort({ insensitive: true, desc: true })
-					objs.sort(function(a,b) { return ns(a.Name, b.Name); });
 					getVid(objs);
 				})
 				.fail(function(jqxhr, textStatus, error) {
 					var err = textStatus + ", " + error;
-					log("Failed to get file list: " + err);
+					log(lst.DownloadFail + err);
 				});
 			}
 
 			function getVid(objs) {
 				var sline = log();
 				var total = objs.length;
-				var stus = function() { sline.textContent = "Download: " + (total - objs.length) + "/" + total; };
-				stus(0);
-				var vid = new Whammy.Video();
+				var loaded = [];
+				var stus = function() { sline.textContent = lst.Downloading + ": " + loaded.length + "/" + total; };
+				var loading = 0;
 				var nextImg = function() {
 					stus();
 					var obj = objs.pop();
 					if (!obj) {
-						stus();
-						makeVid(vid);
+						if (loading == 0)
+							enqueueVid(loaded);
 						return;
 					}
-					var img = new Image();
+					loading++;
+					var img = obj.Img = new Image();
 					img.crossOrigin = "Anonymous";
-					img.onload = function() {
-						var cvs = document.createElement("canvas");
-						cvs.height = img.height;
-						cvs.width = img.width;
-						var ctx = cvs.getContext("2d");
-						ctx.drawImage(img, 0, 0);
-						var dur = 1000;
-						if (objs.length > 0) {
-							dur = (objs[objs.length - 1].T - obj.T) * scale;
-							objs[objs.length - 1].Dlast = dur;
-						} else if(obj.Dlast) {
-							dur = obj.Dlast;
-						}
-						vid.add(cvs, Math.max(Math.min(dur, 32766), 1));
+					loadfinished = function(rem) {
+						if (rem.parentElement)
+							rem.parentElement.removeChild(rem);
+						loading--;
 						nextImg();
 					};
+					img.onload = function() {
+						window.setTimeout(function() {
+							loadfinished(obj.Img);
+							loaded.push(obj);
+						}, 100);
+					};
+					img.onerror = function() { 
+						total--;
+						loadfinished(obj.Img);
+					};
 					img.src = gw + "/ipfs/" + obj.Hash;
+					img.style = 'width: 60px; height: 60px; margin: 5px;';
+					sline.parentElement.appendChild(img);
 				};
-				nextImg();
+				for (var i = 0; i < parallelload; i++)
+					nextImg();
+			}
+
+			function enqueueVid(objs) {
+				var vid = new Whammy.Video();
+				var ns = natsort({ insensitive: true });
+				objs.sort(function(a,b) { return ns(a.Name, b.Name); });
+				var sline = log();
+				var i = 0;
+				var stus = function() { sline.textContent = lst.Enqueuing + ": " + i + "/" + objs.length; };
+				stus();
+				var nextImg = function() {
+					stus();
+					if (i < objs.length)
+						setTimeout(nextImg, 0);
+					else
+						return makeVid(vid);
+					if (i + 1 < objs.length)
+						objs[i].Dur = objs[i + 1].Dur = (objs[i + 1].T - objs[i].T) * scale;
+					var obj = objs[i];
+					i++;
+					var img = obj.Img;
+					var cvs = document.createElement("canvas");
+					img.style = '';
+					cvs.height = img.height;
+					cvs.width = img.width;
+					var ctx = cvs.getContext("2d");
+					ctx.drawImage(img, 0, 0);
+					vid.add(cvs, Math.max(Math.min(obj.Dur, 32766), 1));
+				}
+				setTimeout(nextImg, 0);
 			}
 
 			function makeVid(vid) {
 				var sline = log();
-				var stus = function(i, total) { sline.textContent = "Encoding: " + (i + 1) + "/" + total; };
+				var stus = function(i, total) { sline.textContent = lst.Encoding + ": " + (i + 1) + "/" + total; };
 				stus(-1, "?");
 				vid.compile(false, useVid, stus);
 			}
 
 			function useVid(vid_blob) {
-				var donel = log("Done. Size: " + formatSizeUnits(vid_blob.size));
+				var donel = log(lst.DoneS + formatSizeUnits(vid_blob.size));
 				var vid_url = (window.URL || window.webkitURL).createObjectURL(vid_blob);
 				var vid_e = document.createElement('video');
 				if (vid_e.canPlayType(vid_blob.type).length > 0) {
@@ -146,17 +226,17 @@
 						var w = 640, h = 480;
 						if(vid_e.videoWidth > 0 && vid_e.videoHeight > 0) {
 							w = vid_e.videoWidth; h = vid_e.videoHeight;
-							donel.textContent += " Dimensions: " + w + "×" + h;
+							donel.textContent += lst.Dim + w + "×" + h;
 						}
 						if (vid_e.duration)
-							donel.textContent += " Duration: " + vid_e.duration + " s";
+							donel.textContent += lst.Dur + vid_e.duration + " s";
 						vid_e.width = w; vid_e.height = h;
 					});
 				}
 				var dl = document.createElement('a');
 				dl.download = 'lapse.webm';
 				dl.href = vid_url;
-				dl.appendChild(document.createTextNode("Save"));
+				dl.appendChild(document.createTextNode(lst.Save));
 				append_log(dl);
 			}
 
