@@ -17,6 +17,7 @@
 			var gw = autogw();
 			var scale = 1000;
 			var parallelload = 6;
+			var mode = "webm";
 			
 			var strings = {
 				WebPWarning: { 
@@ -79,6 +80,7 @@
 				log("    Required: h - ipfs-hash resolving to folder of images.");
 				log("    Required: f - RegExp to filter files in folder and extract a numbering for the images.");
 				log("    Optional: s - Scale factor for time codes extracted from image numbering. Default: " + scale + " ms");
+				log("    Optional: m - Mode. Default: " + mode + " Available: webm,");
 				log("    Optional: gw - IPFS gateway. Default: current gateway, if available (e.g.: " + uniq([gw, showgw, "https://ipfs.io"]).join(", ") + ")");
 				log("    Optional: j - Maximum number of images requested in parallel. Default: " + parallelload + " ms");
 				log("");
@@ -160,8 +162,8 @@
 					};
 					img.onload = function() {
 						window.setTimeout(function() {
-							loadfinished(obj.Img);
 							loaded.push(obj);
+							loadfinished(obj.Img);
 						}, 100);
 					};
 					img.onerror = function() { 
@@ -177,7 +179,7 @@
 			}
 
 			function enqueueVid(objs) {
-				var vid = new Whammy.Video();
+				var vid = new Whammy.Video(/*undefined, 1*/);
 				var ns = natsort({ insensitive: true });
 				objs.sort(function(a,b) { return ns(a.Name, b.Name); });
 				var sline = log();
@@ -197,7 +199,7 @@
 					var img = obj.Img;
 					var cvs = document.createElement("canvas");
 					img.style = '';
-					cvs.height = img.height;
+					cvs.height = img.height; // TODO: Make sure that's the same the entire video
 					cvs.width = img.width;
 					var ctx = cvs.getContext("2d");
 					ctx.drawImage(img, 0, 0);
@@ -210,11 +212,10 @@
 				var sline = log();
 				var stus = function(i, total) { sline.textContent = lst.Encoding + ": " + (i + 1) + "/" + total; };
 				stus(-1, "?");
-				vid.compile(false, useVid, stus);
+				  setTimeout(function() {vid.compile(false, useVid, stus);}, 0);
 			}
-
-			function useVid(vid_blob) {
-				var donel = log(lst.DoneS + formatSizeUnits(vid_blob.size));
+			
+	  		function handleBlob(vid_blob) {
 				var vid_url = (window.URL || window.webkitURL).createObjectURL(vid_blob);
 				var vid_e = document.createElement('video');
 				if (vid_e.canPlayType(vid_blob.type).length > 0) {
@@ -234,10 +235,67 @@
 					});
 				}
 				var dl = document.createElement('a');
-				dl.download = 'lapse.webm';
+				dl.download = 'lapse.' + vid_blob.type.replace(/^.*\//,'');
 				dl.href = vid_url;
 				dl.appendChild(document.createTextNode(lst.Save));
-				append_log(dl);
+				return dl;
+			}
+
+			function useVid(vid_blob) {
+				var donel = log(lst.DoneS + formatSizeUnits(vid_blob.size));
+				append_log(handleBlob(vid_blob));
+				mp4Vid(vid_blob);
+			}
+
+			function mp4Vid(vid) {
+				var worker = new Worker("js/ffmpeg-worker-mp4.js");
+				worker.onmessage = function(e) {
+					var msg = e.data;
+					switch (msg.type) {
+						case "ready":
+							var fileReader = new FileReader();
+							fileReader.onload = function() {
+								worker.postMessage({
+									type: "run", 
+									arguments: ["-hide_banner",
+										"-i", "/data/lapse.webm",
+										"-vsync", "2",
+										"-movflags", "faststart",
+										"-pix_fmt", "yuv420p",
+										//"-vf", "\"scale=trunc(iw/2)*2:trunc(ih/2)*2\"", // Let's just hope it's divisible by 2
+										"lapse.mp4"
+									],
+									TOTAL_MEMORY: vid.size * 4,
+									WORKERFS: { blobs: [{name: "lapse.webm", data: vid}], mountpoint: "/data" },
+									//MEMFS: [{ name: "lapse.webm", data: this.result }],
+								});
+							};
+							fileReader.readAsArrayBuffer(vid);
+							break;
+						case "stdout":
+							console.log(">> " + msg.data);
+							break;
+						case "stderr":
+							console.log("!! " + msg.data);
+							break;
+						case "done":
+							log("Done");
+							var m0 = msg.data.MEMFS[0];
+							var blb = new Blob(m0.data, { type: "video/" + m0.name.replace(/^.*\./, '') });
+							append_log(handleBlob(blb));
+							break;
+						case "exit":
+							console.log("Process exited with code " + msg.data);
+							worker.terminate();
+							break;
+					}
+				};
+				worker.onerror = function(e) {
+					log("Error from worker: " + JSON.stringify(e));
+				};
+				worker.onmessageerror = function(e,a,b) {
+					log("Error message worker: " + JSON.stringify(e) + JSON.stringify(a) + JSON.stringify(b));
+				};
 			}
 
 			$(document).ready(main);

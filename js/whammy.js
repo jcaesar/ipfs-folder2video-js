@@ -547,14 +547,14 @@ window.Whammy = (function(){
 					config = new Object()
 					config.target_size = 0;			// if non-zero, set the desired target size in bytes. Takes precedence over the 'compression' parameter.
 					config.target_PSNR = 42;		// if non-zero, specifies the minimal distortion to	try to achieve. Takes precedence over target_size. // 42. I'm not kidding "(in dB. typically: 42)" -- the docs
-					config.method = 4;			// quality/speed trade-off (0=fast, 6=slower-better)
+					config.method = 2;			// quality/speed trade-off (0=fast, 6=slower-better)
 					config.sns_strength = 50;		// Spatial Noise Shaping. 0=off, 100=maximum.
 					config.filter_strength = 20;	// range: [0 = off .. 100 = strongest]
 					config.filter_sharpness = 0;	// range: [0 = off .. 7 = least sharp]
 					config.filter_type = 1;			// filtering type: 0 = simple, 1 = strong (only used if filter_strength > 0 or autofilter > 0)
 					config.partitions = 1;			// log2(number of token partitions) in [0..3] Default is set to 0 for easier progressive decoding.
 					config.segments = 4;			// maximum number of segments to use, in [1..4]
-					config.pass = 3;				// number of entropy-analysis passes (in [1..10]).
+					config.pass = 1;				// number of entropy-analysis passes (in [1..10]).
 					config.show_compressed = 0;		// if true, export the compressed picture back. In-loop filtering is not applied.
 					config.preprocessing = 0;		// preprocessing filter (0=none, 1=segment-smooth)
 					config.autofilter = 0;			// Auto adjust filter's strength [0 = off, 1 = on]
@@ -569,7 +569,7 @@ window.Whammy = (function(){
 					var w = cvs.width;
 					var h = cvs.height;
 					var inputData = cvs.getContext('2d').getImageData(0, 0, w, h).data;
-					var size = encoder.WebPEncodeRGBA(inputData, w, h, w*4, quali || 0.8, out);
+					var size = encoder.WebPEncodeRGBA(inputData, w, h, w*4, (quali || 0.8) * 100, out);
 
 					//after encoding, you can get the enc-details:
 					str = encoder.ReturnExtraInfo();
@@ -608,7 +608,7 @@ window.Whammy = (function(){
 					}else{
 						callback();
 					}
-				});
+				}.bind(this));
 			}.bind(this);
 
 			encodeFrame(0);
