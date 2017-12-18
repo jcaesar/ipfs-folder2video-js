@@ -155,8 +155,8 @@
 					var img = obj.Img = new Image();
 					img.crossOrigin = "Anonymous";
 					loadfinished = function(rem) {
-						if (rem.parentElement)
-							rem.parentElement.removeChild(rem);
+						if (rem.parentNode)
+							rem.parentNode.removeChild(rem);
 						loading--;
 						nextImg();
 					};
@@ -172,7 +172,7 @@
 					};
 					img.src = gw + "/ipfs/" + obj.Hash;
 					img.style = 'width: 60px; height: 60px; margin: 5px;';
-					sline.parentElement.appendChild(img);
+					sline.parentNode.appendChild(img);
 				};
 				for (var i = 0; i < parallelload; i++)
 					nextImg();
