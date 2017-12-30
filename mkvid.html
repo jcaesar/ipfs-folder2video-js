@@ -7,8 +7,6 @@
 			* { /* border: 1px dotted red; */ margin: 0px; }
 			body { padding: 2ex; }
 		</style>
-		<script src="js/jquery.min.js"></script>
-		<script src="js/whammy.js"></script>
 		<script src="js/natsort.min.js"></script> <!-- natsort 1.6 -->
 		<script src="js/somefuncs.js"></script>
 		<script type="text/javascript">
@@ -17,7 +15,11 @@
 			var gw = autogw();
 			var scale = 1000;
 			var parallelload = 6;
-			var mode = "webm";
+			var mode = "auto";
+			var gifopts = {
+				workers: 2,
+				quality: 1
+			}
 			
 			var strings = {
 				WebPWarning: { 
@@ -45,17 +47,20 @@
 					de: "Herunterladen"
 				},
 				Enqueuing: {
-					// Well, not actually necessarily done in this step. But oh well…
-					en: "Image Encoding",
-					de: "Bildcodierung"
+					en: "Sorting",
+					de: "Sortieren"
 				},
 				Encoding: {
-					en: "Video Encoding",
-					de: "Videocodierung"
+					en: "Encoding",
+					de: "Codierung"
 				},
 				DoneS: {
 					en: "Done. Size: ",
 					de: "Fertig. Größe: "
+				},
+				Type: {
+					en: " Type: ",
+					de: " Typ: "
 				},
 				Dur: {
 					en: " Duration: ",
@@ -74,15 +79,16 @@
 
 			function usage() {
 				var showgw = autogw();
-				log("Script for converting a series of images in an IPFS directory to a WebM directly in browser.")
+				log("Script for converting a series of images in an IPFS directory to a video directly in browser.")
 				log("");
 				log("Script requires arguments in the search string (i.e. mkvid.html?arg=value&…):");
 				log("    Required: h - ipfs-hash resolving to folder of images.");
 				log("    Required: f - RegExp to filter files in folder and extract a numbering for the images.");
 				log("    Optional: s - Scale factor for time codes extracted from image numbering. Default: " + scale + " ms");
-				log("    Optional: m - Mode. Default: " + mode + " Available: webm,");
+				log("    Optional: m - Mode. Default: webm if webp is available, gif-mp4 otherwise. Available: webm, gif, mp4");
 				log("    Optional: gw - IPFS gateway. Default: current gateway, if available (e.g.: " + uniq([gw, showgw, "https://ipfs.io"]).join(", ") + ")");
-				log("    Optional: j - Maximum number of images requested in parallel. Default: " + parallelload + " ms");
+				log("    Optional: j - Maximum number of images requested in parallel. Default: " + parallelload);
+				log("    Optional: g - Options to gif.js. Default: " + JSON.stringify(gifopts));
 				log("");
 				var m = new URL(document.location);
 				m.search = "h=QmRqjxJj1AP2WTNJfKoWuJKKYCDNdYDWjzSGuTRW4XAadi&f=c-([0-9]*).jpeg&s=0.2&gw=" + showgw + "&j=12";
@@ -100,17 +106,28 @@
 				if (query.gw)
 					gw = query.gw;
 				var re;
-				try {
+				if (query.f)
 					re = new RegExp(query.f);
-					scale = parseFloat(query.s) || scale;
-					parallelload = Math.max(1, parseInt(query.j) || parallelload);
-				} catch(e) {}
+				scale = parseFloat(query.s) || scale;
+				parallelload = Math.max(1, parseInt(query.j) || parallelload);
+				if (query.g)
+					gifopts = JSON.parse(query.g); // Yeah, if you pass something that is not an object, this will break
+				mode = query.m || mode;
+				webpable = (/^data:image\/webp;base64,/ig).test(document.createElement('canvas').toDataURL('image/webp'));
+				if (mode == "auto" || !mode)
+					if (webpable)
+						mode = "webm";
+					else
+						mode = "gif-mp4";
+				if (mode.match(/webm/) && !webpable)
+					log(lst.WebPWarning);
+
 				if (!re || !query.f || !query.h)
 					return usage();
-				if(!(/^data:image\/webp;base64,/ig).test(document.createElement('canvas').toDataURL('image/webp')))
-					log(lst.WebPWarning);
+
+				gifopts.workerScript = 'js/gif.worker.js';
 				log(lst.Search + gw + ")…");
-				$.getJSON(gw + "/api/v0/ls/" + query.h, function(fd) {
+				getJSON(gw + "/api/v0/ls/" + query.h, function(fd) {
 					var links = fd.Objects[0].Links;
 					var objs = [];
 					var size = 0;
@@ -130,10 +147,6 @@
 						return;
 					}
 					getVid(objs);
-				})
-				.fail(function(jqxhr, textStatus, error) {
-					var err = textStatus + ", " + error;
-					log(lst.DownloadFail + err);
 				});
 			}
 
@@ -148,7 +161,7 @@
 					var obj = objs.pop();
 					if (!obj) {
 						if (loading == 0)
-							enqueueVid(loaded);
+							prepareCoder(loaded);
 						return;
 					}
 					loading++;
@@ -178,8 +191,45 @@
 					nextImg();
 			}
 
-			function enqueueVid(objs) {
-				var vid = new Whammy.Video(/*undefined, 1*/);
+			function prepareCoder(data) {
+				if (mode.match(/gif/))
+					loadScript('js/gif.js', function() { enqueueVid(data, {
+						gif: new GIF(gifopts),
+						addFrame: function(img, delay) {
+							img.style = '';
+							this.gif.addFrame(img, {delay: delay});
+						},
+						makeVid: function() {
+							var sline = log();
+							var stus = function(pr) { sline.textContent = "GIF " + lst.Encoding + ": " + pr.toFixed(3); };
+							this.gif.on('finished', useVid);
+							this.gif.on('progress', stus);
+							stus(0, "?");
+							this.gif.render();
+						}
+					});});
+				if (mode.match(/webm/))
+					loadScript('js/whammy.js', function() { enqueueVid(data, {
+						vid: new Whammy.Video(/*undefined, 1*/),
+						addFrame: function(img, delay) {
+							var cvs = document.createElement("canvas");
+							img.style = '';
+							cvs.height = img.height; // TODO: Make sure that's the same the entire video
+							cvs.width = img.width;
+							var ctx = cvs.getContext("2d");
+							ctx.drawImage(img, 0, 0);
+							this.vid.add(cvs, Math.min(delay, 32766));
+						},
+						makeVid: function() {
+							var sline = log();
+							var stus = function(i, total) { sline.textContent = "WebM " + lst.Encoding + ": " + (i + 1) + "/" + total; };
+							stus(-1, "?");
+							setTimeout((function() { this.vid.compile(false, useVid, stus); }).bind(this), 0);
+						}
+					});});
+			}
+
+			function enqueueVid(objs, coder) {
 				var ns = natsort({ insensitive: true });
 				objs.sort(function(a,b) { return ns(a.Name, b.Name); });
 				var sline = log();
@@ -191,83 +241,97 @@
 					if (i < objs.length)
 						setTimeout(nextImg, 0);
 					else
-						return makeVid(vid);
+						return coder.makeVid();
 					if (i + 1 < objs.length)
 						objs[i].Dur = objs[i + 1].Dur = (objs[i + 1].T - objs[i].T) * scale;
 					var obj = objs[i];
 					i++;
-					var img = obj.Img;
-					var cvs = document.createElement("canvas");
-					img.style = '';
-					cvs.height = img.height; // TODO: Make sure that's the same the entire video
-					cvs.width = img.width;
-					var ctx = cvs.getContext("2d");
-					ctx.drawImage(img, 0, 0);
-					vid.add(cvs, Math.max(Math.min(obj.Dur, 32766), 1));
+					coder.addFrame(obj.Img, Math.min(Math.max(1, obj.Dur), 1000));
 				}
 				setTimeout(nextImg, 0);
 			}
 
-			function makeVid(vid) {
-				var sline = log();
-				var stus = function(i, total) { sline.textContent = lst.Encoding + ": " + (i + 1) + "/" + total; };
-				stus(-1, "?");
-				  setTimeout(function() {vid.compile(false, useVid, stus);}, 0);
-			}
-			
-	  		function handleBlob(vid_blob) {
-				var vid_url = (window.URL || window.webkitURL).createObjectURL(vid_blob);
+			function handleVidBlob(vid_blob, vid_url, donel) {
 				var vid_e = document.createElement('video');
 				if (vid_e.canPlayType(vid_blob.type).length > 0) {
 					vid_e.url = vid_url;
 					vid_e.setAttribute('autoplay', '');
 					vid_e.setAttribute('controls', '');
-					append_log(vid_e);
 					vid_e.addEventListener('loadedmetadata', function() {
 						var w = 640, h = 480;
+						var itssomething = false;
 						if(vid_e.videoWidth > 0 && vid_e.videoHeight > 0) {
 							w = vid_e.videoWidth; h = vid_e.videoHeight;
 							donel.textContent += lst.Dim + w + "×" + h;
+							itssomething = true;
 						}
-						if (vid_e.duration)
+						if (vid_e.duration) {
 							donel.textContent += lst.Dur + vid_e.duration + " s";
+							itssomething = true;
+						}
+						append_log(vid_e);
 						vid_e.width = w; vid_e.height = h;
 					});
 				}
+			}
+			function handleImgBlob(img_blob, img_url) {
+				var img = document.createElement('img');
+				img.src = img_url;
+				append_log(img);
+			}
+
+			function useVid(blob) {
+				var donel = log(lst.DoneS + formatSizeUnits(blob.size) + lst.Type + blob.type);
+				var url = (window.URL || window.webkitURL).createObjectURL(blob);
+				if (blob.type) {
+					if (blob.type.match(/^video/))
+						handleVidBlob(blob, url, donel);
+					if (blob.type.match(/^image/))
+						handleImgBlob(blob, url);
+				}
+				var fname = 'lapse.' + blob.type.replace(/^.*\//,'');
 				var dl = document.createElement('a');
-				dl.download = 'lapse.' + vid_blob.type.replace(/^.*\//,'');
-				dl.href = vid_url;
+				dl.download = fname;
+				dl.href = url;
 				dl.appendChild(document.createTextNode(lst.Save));
-				return dl;
+				donel.parentNode.appendChild(dl);
+				if (mode.match(/mp4/) && !blob.type.match(/mp4/))
+					mp4Vid(blob, fname);
 			}
 
-			function useVid(vid_blob) {
-				var donel = log(lst.DoneS + formatSizeUnits(vid_blob.size));
-				append_log(handleBlob(vid_blob));
-				mp4Vid(vid_blob);
-			}
-
-			function mp4Vid(vid) {
+			function mp4Vid(vid, fname) {
 				var worker = new Worker("js/ffmpeg-worker-mp4.js");
+				var lasterr = "";
+				var sh = document.createElement('span');
+				sh.appendChild(document.createTextNode("MP4 " + lst.Encoding + ": "));
+				var e = document.createElement('tt');
+				sh.appendChild(e);
+				append_log(sh);
+				stus = function(line) { wipe(e); e.appendChild(document.createTextNode(line)); }
+				stus("…");
+				var terminate = false;
 				worker.onmessage = function(e) {
 					var msg = e.data;
 					switch (msg.type) {
 						case "ready":
 							var fileReader = new FileReader();
 							fileReader.onload = function() {
-								worker.postMessage({
-									type: "run", 
-									arguments: ["-hide_banner",
-										"-i", "/data/lapse.webm",
+								args = [//"-hide_banner",
+										//"-loglevel", "debug",
+										"-i", /*"/data/" +*/ fname,
 										"-vsync", "2",
 										"-movflags", "faststart",
 										"-pix_fmt", "yuv420p",
 										//"-vf", "\"scale=trunc(iw/2)*2:trunc(ih/2)*2\"", // Let's just hope it's divisible by 2
 										"lapse.mp4"
-									],
-									TOTAL_MEMORY: vid.size * 4,
-									WORKERFS: { blobs: [{name: "lapse.webm", data: vid}], mountpoint: "/data" },
-									//MEMFS: [{ name: "lapse.webm", data: this.result }],
+									];
+								stus("$ ffmpeg " + args.join(" "));
+								worker.postMessage({
+									type: "run", 
+									arguments: args,
+									TOTAL_MEMORY: 167772160,
+									//WORKERFS: { blobs: [{name: fname, data: vid}], mountpoint: "/data" },
+									MEMFS: [{ name: fname, data: this.result }],
 								});
 							};
 							fileReader.readAsArrayBuffer(vid);
@@ -276,18 +340,31 @@
 							console.log(">> " + msg.data);
 							break;
 						case "stderr":
-							console.log("!! " + msg.data);
+							lasterr = msg.data;
+							console.log("!! " + lasterr);
+							if (lasterr.match(/frame= *[0-9]* fps= *[0-9.]* q= *[0-9.]* L*size=.* time=*[0-9]*:*[0-9]*:*[0-9.]* bitrate=.* speed=.*/))
+								stus(lasterr);
 							break;
 						case "done":
-							log("Done");
 							var m0 = msg.data.MEMFS[0];
-							var blb = new Blob(m0.data, { type: "video/" + m0.name.replace(/^.*\./, '') });
-							append_log(handleBlob(blb));
+							if (m0) {
+								var blb = new Blob([m0.data], { type: "video/" + m0.name.replace(/^.*\./, '') });
+								useVid(blb);
+							}
+							if (terminate)
+								worker.terminate();
+							terminate = true;
 							break;
 						case "exit":
+							if (terminate)
+								worker.terminate();
+							terminate = true;
 							console.log("Process exited with code " + msg.data);
-							worker.terminate();
+							if (msg.data != 0)
+								log("FFmpeg Error: " + lasterr);
 							break;
+						default:
+							console.log("Unknown message: " + JSON.stringify(msg));
 					}
 				};
 				worker.onerror = function(e) {
@@ -298,9 +375,11 @@
 				};
 			}
 
-			$(document).ready(main);
 		</script>
 	</head>
 	<body>
+		<script type="text/javascript">
+			main();
+		</script>
 	</body>
 </html>

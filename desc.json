@@ -5,5 +5,6 @@
 		"Falls Sie an einer vollständigen Kopie interessiert sind: Die <a target=\"_blank\" href=\"https://ipfs.io/ipns/goecam.liftm.de/goecam/\">Rohdaten</a> des Archivs werden über <a target=\"_blank\" href=\"https://ipfs.io/\">IPFS</a> bereitgestellt.",
 		"Fragen und Anregungen zum Archiv bitte an <a target=\"_blank\" href=\"mailto:altstadtbruecke-archiv@liftm.de\">altstatdbrücke-archiv@liftm.de</a>.",
 		"Sämtliches Bildmaterial ist © <a target=\"_blank\" href=\"http://www.altstadtbruecke.de\">www.altstadtbruecke.de</a>. Archivierung: <a target=\"_blank\" href=\"https://liftm.de\">Julius Michaelis</a>."
-	]
+	],
+	"naming": "[cz]-([0-9]*).jpeg"
 }

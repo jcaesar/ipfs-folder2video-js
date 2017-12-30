@@ -126,3 +126,31 @@ function on_frame_event(f) {
 	var messageEvent = eventMethod == "attachEvent" ? "onmessage" : "message";
 	eventer(messageEvent, f);
 }
+
+// https://stackoverflow.com/questions/14388452/how-do-i-load-a-json-object-from-a-file-with-ajax
+function getJSON(path, callback) {
+    var httpRequest = new XMLHttpRequest();
+    httpRequest.onreadystatechange = function() {
+        if (httpRequest.readyState === 4) {
+            if (httpRequest.status === 200 || httpRequest.status === 0) {
+                var data = JSON.parse(httpRequest.responseText);
+                if (callback)
+					callback(data);
+            }
+        }
+    };
+    httpRequest.open('GET', path);
+    httpRequest.send();
+}
+
+// some stackoverflow answer… *hides*
+function loadScript(url, callback)
+{
+	var head = document.getElementsByTagName('head')[0];
+	var script = document.createElement('script');
+	script.type = 'text/javascript';
+	script.src = url;
+	script.onreadystatechange = callback;
+	script.onload = callback;
+	head.appendChild(script);
+}

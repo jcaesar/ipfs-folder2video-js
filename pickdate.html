@@ -9,7 +9,7 @@
 		</style>
 		<link rel="stylesheet" href="css/bootstrap.min.css">
 		<link rel="stylesheet" href="css/bootstrap-year-calendar.min.css">
-		<script src="js/jquery.min.js"></script>
+		<script src="js/jquery-3.2.1.min.js"></script>
 		<script src="js/bootstrap.min.js"></script>
 		<script src="js/bootstrap-year-calendar.min.js"></script>
 		<script src="js/moment.js"></script>
@@ -41,7 +41,7 @@
 				var maxsize = 0;
 				var minDate = new Date(), maxDate;
 				var target = window.location.hash.replace(/^#/, '');
-				imagefmt = fd.naming;
+				imagefmt = fd.naming || imagefmt;
 				for(var i = 0; i < links.length; i++) {
 					if (links[i].Name == target)
 						return folder2vid(links[i]);
