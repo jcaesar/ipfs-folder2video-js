@@ -250,7 +250,7 @@
 						}
 					});});
 				if (mode.match(/mp4/)) {
-					var worker = new Worker("js/ffmpeg-worker-mp4.js");
+					var worker = new Worker("js/videoconverter.js");
 					var msgs = new Array();
 					var fs = [];
 					var concat = "";
@@ -277,9 +277,9 @@
 								switch (msg.type) {
 									case "ready":
 										args = [//"-hide_banner",
-												"-v", "trace",
+												"-v", "debug",
 												"-f", "concat",
-												"-i", "/work/cc.txt",
+												"-i", "cc.txt",
 												"-vsync", "2",
 												"-movflags", "faststart",
 												"-pix_fmt", "yuv420p",
@@ -323,6 +323,7 @@
 										if (msg.data != 0)
 											log("FFmpeg Error: " + lasterr);
 										break;
+									case "start":
 									case "run":
 										break;
 									default:
