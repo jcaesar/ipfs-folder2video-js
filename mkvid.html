@@ -296,9 +296,16 @@
 											].concat(ffmpeg_args)
 											 .concat(["lapse.mp4"]);
 										stus("$ ffmpeg " + args.join(" "));
-										if (!("TextEncoder" in window)) 
-											throw "Sorry, this browser does not support TextEncoder...";
-										var enc = new TextEncoder("utf-8");
+										var DumbFallbackEncoder = {
+											encode: function(str) {
+												uint = new Uint8Array(str.length);
+												for(var i = 0; i < str.length; ++i) {
+													uint[i] = str.charCodeAt(i);
+												}
+												return uint;
+											}
+										}
+										var enc = ("TextEncoder" in window) ? new TextEncoder("utf-8") : DumbFallbackEncoder;
 										fs.push({name: "cc.txt", data: enc.encode(concat)});
 										worker.postMessage({
 											type: "run", 
