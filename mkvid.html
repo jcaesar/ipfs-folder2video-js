@@ -127,7 +127,7 @@
 
 				gifopts.workerScript = 'js/gif.worker.js';
 				log(lst.Search + gw + ")…");
-				getJSON(gw + "/api/v0/ls/" + query.h, function(fd) {
+				getJSON(gw + "/api/v0/ls/" + query.h + "?resolve-type=false", function(fd) {
 					var links = fd.Objects[0].Links;
 					var objs = [];
 					var size = 0;

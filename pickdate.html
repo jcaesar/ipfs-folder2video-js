@@ -89,7 +89,7 @@
 				$.getJSON(gw + "/ipfs/" + hash + "/desc.json", parsedesc).fail(function(jqxhr, textStatus, error) {
 					settext('desc', "Failed to get description: " + textStatus + ", " + error);
 				});
-				$.getJSON(gw + "/api/v0/ls/" + hash, parse2cal).fail(function(jqxhr, textStatus, error) {
+				$.getJSON(gw + "/api/v0/ls/" + hash + "?resolve-type=false", parse2cal).fail(function(jqxhr, textStatus, error) {
 					settext('calendar', "Failed to get folder list: " + textStatus + ", " + error);
 				});
 			});
