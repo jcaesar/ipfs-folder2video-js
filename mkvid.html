@@ -17,6 +17,12 @@
 			var gw = autogw();
 			var scale = 1000;
 			var parallelload = 6;
+			var ffmpeg_args = [
+				"-vsync", "2",
+				"-movflags", "faststart",
+				"-pix_fmt", "yuv420p",
+				//"-vf", "\"scale=trunc(iw/2)*2:trunc(ih/2)*2\"", // Let's just hope it's divisible by 2
+			];
 			var mode = "mp4";
 			var gifopts = {
 				workers: 2,
@@ -91,6 +97,7 @@
 				log("    Optional: gw - IPFS gateway. Default: current gateway, if available (e.g.: " + uniq([gw, showgw, "https://ipfs.io"]).join(", ") + ")");
 				log("    Optional: j - Maximum number of images requested in parallel. Default: " + parallelload);
 				log("    Optional: g - Options to gif.js. Default: " + JSON.stringify(gifopts));
+				log("    Optional: e - Options ffmpeg. Default: " + JSON.stringify(ffmpeg_args));
 				log("");
 				var m = new URL(document.location);
 				m.search = "h=QmRqjxJj1AP2WTNJfKoWuJKKYCDNdYDWjzSGuTRW4XAadi&f=c-([0-9]*).jpeg&s=0.2&gw=" + showgw + "&j=12";
@@ -116,6 +123,8 @@
 				parallelload = Math.max(1, parseInt(query.j) || parallelload);
 				if (query.g)
 					gifopts = JSON.parse(query.g); // Yeah, if you pass something that is not an object, this will break
+				if (query.e)
+					ffmpeg_args = JSON.parse(query.e);
 				mode = query.m || mode;
 				webpable = (/^data:image\/webp;base64,/ig).test(document.createElement('canvas').toDataURL('image/webp'));
 				if (mode.match(/webm/) && !webpable)
@@ -250,17 +259,21 @@
 						}
 					});});
 				if (mode.match(/mp4/)) {
-					var worker = new Worker("js/videoconverter.js");
+					var worker = new Worker("js/ffmpeg-worker-mp4.js");
 					var msgs = new Array();
 					var fs = [];
 					var concat = "";
 					worker.onmessage = function(e) { msgs.push(e); };
 					enqueueVid(data, {
 						addFrame: function(img, delay, next) {
-							var fname = "i" + fs.length + ".jpeg"; // Chances are, ffmpeg doesn't care about the extension. Still not a good idea. TODO.
-							fs.push({name: fname, data: img});
-							concat += "file " + fname + "\nduration " + (delay / 1000) + "\n";
-							next();
+							var reader = new FileReader();
+							reader.onload = function() {
+								var fname = "i" + fs.length + ".jpeg"; // Chances are, ffmpeg doesn't care about the extension. Still not a good idea. TODO.
+								fs.push({name: fname, data: this.result});
+								concat += "file " + fname + "\nduration " + (delay / 1000) + "\n";
+								next();
+							};
+							reader.readAsArrayBuffer(img);
 						},
 						makeVid: function() {
 							var lasterr = "";
@@ -277,17 +290,16 @@
 								switch (msg.type) {
 									case "ready":
 										args = [//"-hide_banner",
-												"-v", "debug",
+												//"-v", "debug",
 												"-f", "concat",
 												"-i", "cc.txt",
-												"-vsync", "2",
-												"-movflags", "faststart",
-												"-pix_fmt", "yuv420p",
-												//"-vf", "\"scale=trunc(iw/2)*2:trunc(ih/2)*2\"", // Let's just hope it's divisible by 2
-												"lapse.mp4"
-											];
+											].concat(ffmpeg_args)
+											 .concat(["lapse.mp4"]);
 										stus("$ ffmpeg " + args.join(" "));
-										fs.push({name: "cc.txt", data: new Blob([concat], {type:'text/plain'})});
+										if (!("TextEncoder" in window)) 
+											throw "Sorry, this browser does not support TextEncoder...";
+										var enc = new TextEncoder("utf-8");
+										fs.push({name: "cc.txt", data: enc.encode(concat)});
 										worker.postMessage({
 											type: "run", 
 											arguments: args,
