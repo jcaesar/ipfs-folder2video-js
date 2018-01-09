@@ -12,10 +12,12 @@
 		<script type="text/javascript">
 			// Note that this entire idea violates "Bring your application to your data, not the other way around". ¯\_(ツ)_/¯
 
+			var createURL = window.URL || window.webkitURL;
+
 			var gw = autogw();
 			var scale = 1000;
 			var parallelload = 6;
-			var mode = "auto";
+			var mode = "mp4";
 			var gifopts = {
 				workers: 2,
 				quality: 1
@@ -85,7 +87,7 @@
 				log("    Required: h - ipfs-hash resolving to folder of images.");
 				log("    Required: f - RegExp to filter files in folder and extract a numbering for the images.");
 				log("    Optional: s - Scale factor for time codes extracted from image numbering. Default: " + scale + " ms");
-				log("    Optional: m - Mode. Default: webm if webp is available, gif-mp4 otherwise. Available: webm, gif, mp4");
+				log("    Optional: m - Mode. Default: " + mode + ". Available: webm, gif, mp4");
 				log("    Optional: gw - IPFS gateway. Default: current gateway, if available (e.g.: " + uniq([gw, showgw, "https://ipfs.io"]).join(", ") + ")");
 				log("    Optional: j - Maximum number of images requested in parallel. Default: " + parallelload);
 				log("    Optional: g - Options to gif.js. Default: " + JSON.stringify(gifopts));
@@ -108,22 +110,16 @@
 				var re;
 				if (query.f)
 					re = new RegExp(query.f);
+				if (!re || !query.f || !query.h)
+					return usage();
 				scale = parseFloat(query.s) || scale;
 				parallelload = Math.max(1, parseInt(query.j) || parallelload);
 				if (query.g)
 					gifopts = JSON.parse(query.g); // Yeah, if you pass something that is not an object, this will break
 				mode = query.m || mode;
 				webpable = (/^data:image\/webp;base64,/ig).test(document.createElement('canvas').toDataURL('image/webp'));
-				if (mode == "auto" || !mode)
-					if (webpable)
-						mode = "webm";
-					else
-						mode = "gif-mp4";
 				if (mode.match(/webm/) && !webpable)
 					log(lst.WebPWarning);
-
-				if (!re || !query.f || !query.h)
-					return usage();
 
 				gifopts.workerScript = 'js/gif.worker.js';
 				log(lst.Search + gw + ")…");
@@ -146,11 +142,11 @@
 						log(lst.Exit);
 						return;
 					}
-					getVid(objs);
+					getImgs(objs);
 				});
 			}
 
-			function getVid(objs) {
+			function getImgs(objs) {
 				var sline = log();
 				var total = objs.length;
 				var loaded = [];
@@ -159,45 +155,73 @@
 				var nextImg = function() {
 					stus();
 					var obj = objs.pop();
+					//log("Next? " + loading + " " + obj);
 					if (!obj) {
-						if (loading == 0)
+						if (loading === 0) {
 							prepareCoder(loaded);
+							//loading = false;
+						}
 						return;
 					}
 					loading++;
-					var img = obj.Img = new Image();
-					img.crossOrigin = "Anonymous";
-					loadfinished = function(rem) {
-						if (rem.parentNode)
-							rem.parentNode.removeChild(rem);
+					//console.log("Load start. " + loading);
+
+					var xhr = new XMLHttpRequest();
+					xhr.open("GET", gw + "/ipfs/" + obj.Hash);
+					xhr.responseType = "blob";
+					loadfinished = function() {
+						//console.log("Load finish. " + loading);
 						loading--;
 						nextImg();
 					};
-					img.onload = function() {
-						window.setTimeout(function() {
-							loaded.push(obj);
-							loadfinished(obj.Img);
-						}, 100);
-					};
-					img.onerror = function() { 
+					xhr.onerror = function() { 
 						total--;
-						loadfinished(obj.Img);
+						loadfinished();
 					};
-					img.src = gw + "/ipfs/" + obj.Hash;
-					img.style = 'width: 60px; height: 60px; margin: 5px;';
-					sline.parentNode.appendChild(img);
+					xhr.onload = function() {
+						if (xhr.status === 200) {
+							obj.Data = xhr.response;
+							loaded.push(obj);
+							loadfinished();
+						} else
+							xhr.onerror();
+					};
+					xhr.send();
 				};
 				for (var i = 0; i < parallelload; i++)
 					nextImg();
+			}
+
+			function data2img(data, onload) {
+				var url = createURL.createObjectURL(data);
+		 		var img = document.createElement('img');
+				img.src = url;
+				img.onload = function() { onload(img); }
+			}
+
+			function data2cvs(data, onload) {
+				data2img(data, function(img) {
+					var cvs = document.createElement("canvas");
+					img.style = '';
+					cvs.height = img.naturalHeight || img.height; // TODO: Make sure that's the same the entire video
+					cvs.width = img.naturalWidth || img.width;
+					var ctx = cvs.getContext("2d");
+					ctx.drawImage(img, 0, 0);
+					onload(cvs);
+				});
+				// Promises would really be a thing to use. Then again, outside of teh Scalaz, they just don't cut it.
 			}
 
 			function prepareCoder(data) {
 				if (mode.match(/gif/))
 					loadScript('js/gif.js', function() { enqueueVid(data, {
 						gif: new GIF(gifopts),
-						addFrame: function(img, delay) {
-							img.style = '';
-							this.gif.addFrame(img, {delay: delay});
+						addFrame: function(blob, delay, next) {
+							var gif = this.gif;
+							data2img(blob, function(img) {
+								gif.addFrame(img, {delay: delay});
+								next();
+							});
 						},
 						makeVid: function() {
 							var sline = log();
@@ -211,14 +235,12 @@
 				if (mode.match(/webm/))
 					loadScript('js/whammy.js', function() { enqueueVid(data, {
 						vid: new Whammy.Video(/*undefined, 1*/),
-						addFrame: function(img, delay) {
-							var cvs = document.createElement("canvas");
-							img.style = '';
-							cvs.height = img.height; // TODO: Make sure that's the same the entire video
-							cvs.width = img.width;
-							var ctx = cvs.getContext("2d");
-							ctx.drawImage(img, 0, 0);
-							this.vid.add(cvs, Math.min(delay, 32766));
+						addFrame: function(blob, delay, next) {
+							var vid = this.vid;
+							data2cvs(blob, function(cvs) {
+								vid.add(cvs, Math.min(delay, 32766));
+								next();
+							});
 						},
 						makeVid: function() {
 							var sline = log();
@@ -227,6 +249,97 @@
 							setTimeout((function() { this.vid.compile(false, useVid, stus); }).bind(this), 0);
 						}
 					});});
+				if (mode.match(/mp4/)) {
+					var worker = new Worker("js/ffmpeg-worker-mp4.js");
+					var msgs = new Array();
+					var fs = [];
+					var concat = "";
+					worker.onmessage = function(e) { msgs.push(e); };
+					enqueueVid(data, {
+						addFrame: function(img, delay, next) {
+							var fname = "i" + fs.length + ".jpeg"; // Chances are, ffmpeg doesn't care about the extension. Still not a good idea. TODO.
+							fs.push({name: fname, data: img});
+							concat += "file " + fname + "\nduration " + (delay / 1000) + "\n";
+							next();
+						},
+						makeVid: function() {
+							var lasterr = "";
+							var sh = document.createElement('span');
+							sh.appendChild(document.createTextNode("MP4 " + lst.Encoding + ": "));
+							var e = document.createElement('tt');
+							sh.appendChild(e);
+							append_log(sh);
+							stus = function(line) { wipe(e); e.appendChild(document.createTextNode(line)); }
+							stus("…");
+							var terminate = false;
+							worker.onmessage = function(e) {
+								var msg = e.data;
+								switch (msg.type) {
+									case "ready":
+										args = [//"-hide_banner",
+												"-v", "trace",
+												"-f", "concat",
+												"-i", "/work/cc.txt",
+												"-vsync", "2",
+												"-movflags", "faststart",
+												"-pix_fmt", "yuv420p",
+												//"-vf", "\"scale=trunc(iw/2)*2:trunc(ih/2)*2\"", // Let's just hope it's divisible by 2
+												"lapse.mp4"
+											];
+										stus("$ ffmpeg " + args.join(" "));
+										fs.push({name: "cc.txt", data: new Blob([concat], {type:'text/plain'})});
+										worker.postMessage({
+											type: "run", 
+											arguments: args,
+											TOTAL_MEMORY: 167772160,
+											//WORKERFS: { blobs: fs, mountpoint: "/work/" },
+											MEMFS: fs,
+										});
+										break;
+									case "stdout":
+										console.log(">> " + msg.data);
+										break;
+									case "stderr":
+										lasterr = msg.data;
+										console.log("!! " + lasterr);
+										if (lasterr.match(/frame= *[0-9]* fps= *[0-9.]* q= *[0-9.]* L*size=.* time=*[0-9]*:*[0-9]*:*[0-9.]* bitrate=.* speed=.*/))
+											stus(lasterr);
+										break;
+									case "done":
+										var m0 = msg.data.MEMFS[0];
+										if (m0) {
+											var blb = new Blob([m0.data], { type: "video/" + m0.name.replace(/^.*\./, '') });
+											useVid(blb);
+										}
+										if (terminate)
+											worker.terminate();
+										terminate = true;
+										break;
+									case "exit":
+										if (terminate)
+											worker.terminate();
+										terminate = true;
+										console.log("Process exited with code " + msg.data);
+										if (msg.data != 0)
+											log("FFmpeg Error: " + lasterr);
+										break;
+									case "run":
+										break;
+									default:
+										console.log("Unknown message: " + JSON.stringify(msg));
+								}
+							};
+							for (var i = 0; i < msgs.length; i++)
+								worker.onmessage(msgs[i]);
+						}
+					});
+					worker.onerror = function(e) {
+						log("Error from worker: " + JSON.stringify(e));
+					};
+					worker.onmessageerror = function(e,a,b) {
+						log("Error message worker: " + JSON.stringify(e) + JSON.stringify(a) + JSON.stringify(b));
+					};
+				}
 			}
 
 			function enqueueVid(objs, coder) {
@@ -238,15 +351,14 @@
 				stus();
 				var nextImg = function() {
 					stus();
-					if (i < objs.length)
-						setTimeout(nextImg, 0);
-					else
+					if (i >= objs.length)
 						return coder.makeVid();
 					if (i + 1 < objs.length)
 						objs[i].Dur = objs[i + 1].Dur = (objs[i + 1].T - objs[i].T) * scale;
 					var obj = objs[i];
 					i++;
-					coder.addFrame(obj.Img, Math.min(Math.max(1, obj.Dur), 1000));
+					coder.addFrame(obj.Data, Math.min(Math.max(1, obj.Dur), 1000),
+						function() { setTimeout(nextImg, 0); });
 				}
 				setTimeout(nextImg, 0);
 			}
@@ -282,7 +394,7 @@
 
 			function useVid(blob) {
 				var donel = log(lst.DoneS + formatSizeUnits(blob.size) + lst.Type + blob.type);
-				var url = (window.URL || window.webkitURL).createObjectURL(blob);
+				var url = createURL.createObjectURL(blob);
 				if (blob.type) {
 					if (blob.type.match(/^video/))
 						handleVidBlob(blob, url, donel);
@@ -295,84 +407,6 @@
 				dl.href = url;
 				dl.appendChild(document.createTextNode(lst.Save));
 				donel.parentNode.appendChild(dl);
-				if (mode.match(/mp4/) && !blob.type.match(/mp4/))
-					mp4Vid(blob, fname);
-			}
-
-			function mp4Vid(vid, fname) {
-				var worker = new Worker("js/ffmpeg-worker-mp4.js");
-				var lasterr = "";
-				var sh = document.createElement('span');
-				sh.appendChild(document.createTextNode("MP4 " + lst.Encoding + ": "));
-				var e = document.createElement('tt');
-				sh.appendChild(e);
-				append_log(sh);
-				stus = function(line) { wipe(e); e.appendChild(document.createTextNode(line)); }
-				stus("…");
-				var terminate = false;
-				worker.onmessage = function(e) {
-					var msg = e.data;
-					switch (msg.type) {
-						case "ready":
-							var fileReader = new FileReader();
-							fileReader.onload = function() {
-								args = [//"-hide_banner",
-										//"-loglevel", "debug",
-										"-i", /*"/data/" +*/ fname,
-										"-vsync", "2",
-										"-movflags", "faststart",
-										"-pix_fmt", "yuv420p",
-										//"-vf", "\"scale=trunc(iw/2)*2:trunc(ih/2)*2\"", // Let's just hope it's divisible by 2
-										"lapse.mp4"
-									];
-								stus("$ ffmpeg " + args.join(" "));
-								worker.postMessage({
-									type: "run", 
-									arguments: args,
-									TOTAL_MEMORY: 167772160,
-									//WORKERFS: { blobs: [{name: fname, data: vid}], mountpoint: "/data" },
-									MEMFS: [{ name: fname, data: this.result }],
-								});
-							};
-							fileReader.readAsArrayBuffer(vid);
-							break;
-						case "stdout":
-							console.log(">> " + msg.data);
-							break;
-						case "stderr":
-							lasterr = msg.data;
-							console.log("!! " + lasterr);
-							if (lasterr.match(/frame= *[0-9]* fps= *[0-9.]* q= *[0-9.]* L*size=.* time=*[0-9]*:*[0-9]*:*[0-9.]* bitrate=.* speed=.*/))
-								stus(lasterr);
-							break;
-						case "done":
-							var m0 = msg.data.MEMFS[0];
-							if (m0) {
-								var blb = new Blob([m0.data], { type: "video/" + m0.name.replace(/^.*\./, '') });
-								useVid(blb);
-							}
-							if (terminate)
-								worker.terminate();
-							terminate = true;
-							break;
-						case "exit":
-							if (terminate)
-								worker.terminate();
-							terminate = true;
-							console.log("Process exited with code " + msg.data);
-							if (msg.data != 0)
-								log("FFmpeg Error: " + lasterr);
-							break;
-						default:
-							console.log("Unknown message: " + JSON.stringify(msg));
-					}
-				};
-				worker.onerror = function(e) {
-					log("Error from worker: " + JSON.stringify(e));
-				};
-				worker.onmessageerror = function(e,a,b) {
-					log("Error message worker: " + JSON.stringify(e) + JSON.stringify(a) + JSON.stringify(b));
-				};
 			}
 
 		</script>
