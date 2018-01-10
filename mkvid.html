@@ -222,8 +222,25 @@
 			}
 
 			function prepareCoder(data) {
-				if (mode.match(/gif/))
-					loadScript('js/gif.js', function() { enqueueVid(data, {
+				var encoders = [];
+				var estack = {
+					addFrame: function(blob, delay, next) {
+						encoders.reduce(function(next, e) {
+							return function() { e.addFrame(blob, delay, next); };
+						}, next)();
+					},
+					makeVid: function() {
+						encoders.map(function(e) { e.makeVid(); });
+					}
+				}
+				var ev = function() { enqueueVid(data, estack); ev = function() { throw "Internal WAT"; }; };
+
+				// This is a little bit twisted.
+				// Normally, I'd make the encoders into proper classes and define them outside of this function,
+				// but they need those scripts loaded, and I don't want to load them unconditionally, so… meh.
+				// I know, promises…
+				if (mode.match(/gif/)) {
+					loadScript('js/gif.js', function() { encoders.push({
 						gif: new GIF(gifopts),
 						addFrame: function(blob, delay, next) {
 							var gif = this.gif;
@@ -240,9 +257,11 @@
 							stus(0, "?");
 							this.gif.render();
 						}
-					});});
-				if (mode.match(/webm/))
-					loadScript('js/whammy.js', function() { enqueueVid(data, {
+					}); ev(); });
+					ev = (function(evo) { ev = evo; }).bind(undefined, ev);
+				}
+				if (mode.match(/webm/)) {
+					loadScript('js/whammy.js', function() { encoders.push({
 						vid: new Whammy.Video(/*undefined, 1*/),
 						addFrame: function(blob, delay, next) {
 							var vid = this.vid;
@@ -257,14 +276,16 @@
 							stus(-1, "?");
 							setTimeout((function() { this.vid.compile(false, useVid, stus); }).bind(this), 0);
 						}
-					});});
+					}); ev(); });
+					ev = (function(evo) { ev = evo; }).bind(undefined, ev);
+				}
 				if (mode.match(/mp4/)) {
 					var worker = new Worker("js/ffmpeg-worker-mp4.js");
-					var msgs = new Array();
+					var msgs = new Array(); // Stack for messages while enqueueVid is running
 					var fs = [];
 					var concat = "";
 					worker.onmessage = function(e) { msgs.push(e); };
-					enqueueVid(data, {
+					encoders.push({
 						addFrame: function(img, delay, next) {
 							var reader = new FileReader();
 							reader.onload = function() {
@@ -360,6 +381,7 @@
 						log("Error message worker: " + JSON.stringify(e) + JSON.stringify(a) + JSON.stringify(b));
 					};
 				}
+				ev();
 			}
 
 			function enqueueVid(objs, coder) {
