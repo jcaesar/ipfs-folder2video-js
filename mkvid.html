@@ -386,7 +386,7 @@
 			function handleVidBlob(vid_blob, vid_url, donel) {
 				var vid_e = document.createElement('video');
 				if (vid_e.canPlayType(vid_blob.type).length > 0) {
-					vid_e.url = vid_url;
+					vid_e.src = vid_url;
 					vid_e.setAttribute('autoplay', '');
 					vid_e.setAttribute('controls', '');
 					vid_e.addEventListener('loadedmetadata', function() {
